@@ -56,6 +56,23 @@ def execute_published(slug: str, bars: Any, params: "dict | None" = None,
     return result
 
 
+def list_published(registry: "Path | None" = None) -> list:
+    """List published indicators in the registry: [{slug, name, kind}, ...]."""
+    base = _registry_base(registry)
+    if not base.exists():
+        return []
+    out = []
+    for d in sorted(base.iterdir()):
+        meta = d / "meta.json"
+        if d.is_dir() and meta.exists():
+            try:
+                m = json.loads(meta.read_text())
+            except Exception:
+                continue
+            out.append({"slug": m.get("slug", d.name), "name": m.get("name"), "kind": m.get("kind")})
+    return out
+
+
 class RunRequest(BaseModel):
     slug: str
     bars: list[dict]
@@ -71,6 +88,10 @@ def create_app():
     @app.get("/health")
     def health() -> dict:
         return {"ok": True}
+
+    @app.get("/indicators")
+    def indicators_list() -> dict:
+        return {"indicators": list_published()}
 
     @app.post("/run")
     def run(req: RunRequest) -> dict:
