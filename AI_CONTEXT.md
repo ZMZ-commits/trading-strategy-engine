@@ -61,25 +61,45 @@ running service. It ships by being a dependency of the backend image.
 - `BaseStrategy(ABC)` with abstract `run(config) -> RunResult` — the extension
   point for concrete strategies.
 
+### `tsp/` — authoring SDK (Phase 1b, custom-indicator IDE)
+- Separate top-level package (NOT imported by `trading_strategy_engine/__init__`,
+  so it can't affect the backend). Pip-installable into the JupyterLab kernel.
+- `tsp.Ctx` — execution context: exposes OHLCV Series (`open/high/low/close/volume`),
+  `param(name, default)`, built-in indicator helpers, and `plot(name, series, kind)`.
+- `tsp.indicators` — `sma/ema/rsi/macd/bbands/vwap/stoch` (same math as the backend).
+- `tsp.run_indicator(compute, bars, params)` — runs a user `compute(ctx)` and returns
+  `{indicators: {name: {kind, time, values}}}` (what the sandbox worker calls).
+- `tsp.publish(name, compute, kind, ...)` — writes `compute.py` + `meta.json` to a
+  registry (`$TSP_REGISTRY`). Auth-gating lives in the backend/UI, not here.
+- See platform `docs/ROADMAP.md` §5.
+
 ---
 
 ## 4. Features
 - Pydantic run/transaction models shared in shape with the backend.
 - Filesystem run persistence compatible with the backend's strategy store.
 - Abstract base class for pluggable strategies.
-- **Gap:** no concrete strategy implementations or real execution/risk logic yet.
+- **`tsp` authoring SDK** — the indicator `compute(ctx)` contract + built-in
+  indicator math + publish-to-registry (Phase 1b of the custom-indicator IDE).
+- **Gap:** no concrete strategy implementations or real execution/risk logic yet;
+  sandbox worker + registry consumption + chart wiring still to come.
 
 ---
 
 ## 5. Latest Changes (Living)
 > Prepend newest first. Recompute: `git log origin/main --no-merges --oneline`.
 
+- **2026-06-21** (`feature/tsp-sdk` → `dev`) — add `tsp` authoring SDK (Ctx,
+  indicator math, run_indicator, publish) — Phase 1b of the custom-indicator IDE.
 - **2026-06-11** (`main`) — add GHCR docker login to VM deploy step.
 - **2026-06-10** (`main`) — add Dockerfile + 3-env GitHub Actions CI/CD (Hetzner).
 - **2026-06-09** (`main`) — 3-tier branching docs.
 - **2026-05-24** (`main`) — implement engine package: models, runner, base strategy.
 
 ## 6. What's next / TODO
-- Implement real strategy logic (signals → orders → run results) behind `BaseStrategy`.
-- Wire concrete strategies into `runner.run_strategy` instead of the stub lifecycle.
-- _(add upcoming work here)_
+- **Phase 1b cont.:** sandbox worker that loads a registry entry + live bars and
+  calls `tsp.run_indicator`; backend endpoint to serve custom indicators; UI wiring
+  to render them on the chart.
+- Strategy side of the SDK (`on_bar(ctx)`, `buy/sell/position`, metrics).
+- Implement real strategy logic behind `BaseStrategy`; wire into `runner.run_strategy`.
+- See platform `docs/ROADMAP.md` for the full phased plan.
