@@ -1,0 +1,45 @@
+name: Build sandbox image → GHCR
+
+# Builds the tsp sandbox worker (Dockerfile.sandbox) and pushes it to GHCR so the
+# VM's compose stack can run it. The sandbox is a single shared container on the
+# VM (which runs from main), so we build the :prod tag from main.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tsp/**'
+      - 'Dockerfile.sandbox'
+      - 'setup.py'
+      - 'requirements.txt'
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/zmz-commits/trading-strategy-sandbox
+
+jobs:
+  build:
+    name: Build & push sandbox image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.sandbox
+          push: true
+          tags: ${{ env.IMAGE }}:prod
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
