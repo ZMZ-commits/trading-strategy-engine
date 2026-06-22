@@ -1,0 +1,19 @@
+# Sandbox worker image — runs PUBLISHED custom indicators in isolation.
+# Built from this repo (installs the engine + tsp SDK + FastAPI worker).
+# The compose `sandbox` service runs this; the backend POSTs jobs to :9000.
+FROM python:3.11-slim
+
+WORKDIR /app
+COPY . /app
+
+# Installs trading-strategy-engine (pulls in tsp, pandas, numpy) + the worker server.
+RUN pip install --no-cache-dir . "fastapi>=0.110" "uvicorn>=0.27"
+
+# Run as a non-root user (defense in depth; the container is also resource-capped,
+# read-only rootfs, and has no network egress in the compose stack).
+RUN useradd -m sandbox
+USER sandbox
+
+EXPOSE 9000
+# --factory: create_app() builds the app.
+CMD ["uvicorn", "tsp.worker:create_app", "--factory", "--host", "0.0.0.0", "--port", "9000"]
