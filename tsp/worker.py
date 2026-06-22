@@ -7,25 +7,38 @@ series. No data fetching and no network egress happen here — the backend suppl
 the bars.
 
 Executing user-authored code is exactly why this runs in the locked-down sandbox
-container (resource-capped, read-only rootfs, no egress) rather than in-process
-in the backend.
-"""
-from __future__ import annotations
+container rather than in-process in the backend.
 
+NOTE: no ``from __future__ import annotations`` here on purpose — FastAPI must see
+``RunRequest`` (defined at module scope) as a real Pydantic model so it treats it
+as the request body, not a query parameter.
+"""
 import json
+import os
 from pathlib import Path
 from typing import Any, Callable
 
-from .registry import registry_dir
+from pydantic import BaseModel
+
 from .runner import run_indicator
 
 
-def load_compute(slug: str, registry: Path | None = None) -> tuple[Callable, dict]:
+def _registry_base(registry: "Path | None" = None) -> Path:
+    """Registry root WITHOUT creating it (the sandbox mounts it read-only)."""
+    if registry is not None:
+        return Path(registry)
+    return Path(os.getenv("TSP_REGISTRY", str(Path.home() / "tsp-registry")))
+
+
+def load_compute(slug: str, registry: "Path | None" = None):
     """Load and exec a published indicator's source; return (compute_fn, meta)."""
-    base = (registry or registry_dir()) / slug
-    meta = json.loads((base / "meta.json").read_text())
+    base = _registry_base(registry) / slug
+    meta_path = base / "meta.json"
+    if not meta_path.exists():
+        raise FileNotFoundError(f"indicator '{slug}' not found")
+    meta = json.loads(meta_path.read_text())
     source = (base / "compute.py").read_text()
-    namespace: dict[str, Any] = {}
+    namespace: dict = {}
     exec(compile(source, f"<tsp:{slug}>", "exec"), namespace)  # user code; sandboxed
     entry = meta.get("entrypoint", "compute")
     fn = namespace.get(entry)
@@ -34,12 +47,8 @@ def load_compute(slug: str, registry: Path | None = None) -> tuple[Callable, dic
     return fn, meta
 
 
-def execute_published(
-    slug: str,
-    bars: Any,
-    params: dict | None = None,
-    registry: Path | None = None,
-) -> dict:
+def execute_published(slug: str, bars: Any, params: "dict | None" = None,
+                      registry: "Path | None" = None) -> dict:
     """Load published ``slug`` and run it over ``bars``; returns series + meta."""
     fn, meta = load_compute(slug, registry)
     result = run_indicator(fn, bars, params if params is not None else (meta.get("params") or {}))
@@ -47,17 +56,17 @@ def execute_published(
     return result
 
 
+class RunRequest(BaseModel):
+    slug: str
+    bars: list[dict]
+    params: dict = {}
+
+
 def create_app():
     """Build the FastAPI worker app (imported lazily so the SDK needn't depend on FastAPI)."""
     from fastapi import FastAPI, HTTPException
-    from pydantic import BaseModel
 
     app = FastAPI(title="tsp sandbox worker", version="0.1.0")
-
-    class RunRequest(BaseModel):
-        slug: str
-        bars: list[dict]
-        params: dict = {}
 
     @app.get("/health")
     def health() -> dict:
@@ -67,8 +76,8 @@ def create_app():
     def run(req: RunRequest) -> dict:
         try:
             return execute_published(req.slug, req.bars, req.params)
-        except FileNotFoundError:
-            raise HTTPException(status_code=404, detail=f"indicator '{req.slug}' not found")
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e))
         except Exception as e:  # noqa: BLE001 — surface author errors to the caller
             raise HTTPException(status_code=400, detail=f"execution error: {e}")
 
