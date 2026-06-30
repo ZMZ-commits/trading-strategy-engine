@@ -56,6 +56,53 @@ def execute_published(slug: str, bars: Any, params: "dict | None" = None,
     return result
 
 
+def _strategies_base(registry: "Path | None" = None) -> Path:
+    """Authoring strategies live alongside the registry, under ../strategies."""
+    return _registry_base(registry).parent / "strategies"
+
+
+def load_strategy_ns(slug: str, registry: "Path | None" = None) -> dict:
+    """Exec a strategy's strategy.py and return its module namespace."""
+    src = _strategies_base(registry) / slug / "strategy.py"
+    if not src.exists():
+        raise FileNotFoundError(f"strategy '{slug}' not found")
+    namespace: dict = {}
+    exec(compile(src.read_text(), f"<tsp-strategy:{slug}>", "exec"), namespace)  # sandboxed
+    return namespace
+
+
+def execute_strategy(slug: str, bars: Any, registry: "Path | None" = None) -> dict:
+    """Run a strategy's compute (for its plotted line) and signals (markers).
+
+    Returns run_indicator's ``{"indicators": {...}}`` plus a ``signals`` list of
+    ``{"time": iso, "type": "buy"|"sell", "price": float}``.
+    """
+    ns = load_strategy_ns(slug, registry)
+    compute = ns.get("compute")
+    if not callable(compute):
+        raise ValueError(f"strategy '{slug}' has no compute(ctx)")
+    result = run_indicator(compute, bars)
+
+    signals = []
+    sig_fn = ns.get("signals")
+    if callable(sig_fn):
+        for s in sig_fn(bars):
+            ts = s.get("ts")
+            time = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+            signals.append({"time": time, "type": s.get("type"), "price": s.get("price")})
+    result["signals"] = signals
+    result["meta"] = {"slug": slug, "kind": "strategy"}
+    return result
+
+
+def list_strategies(registry: "Path | None" = None) -> list:
+    """List strategy folders: [{slug, name}, ...]."""
+    base = _strategies_base(registry)
+    if not base.exists():
+        return []
+    return [{"slug": d.name, "name": d.name} for d in sorted(base.iterdir()) if d.is_dir()]
+
+
 def list_published(registry: "Path | None" = None) -> list:
     """List published indicators in the registry: [{slug, name, kind}, ...]."""
     base = _registry_base(registry)
@@ -79,6 +126,11 @@ class RunRequest(BaseModel):
     params: dict = {}
 
 
+class StrategyRequest(BaseModel):
+    slug: str
+    bars: list[dict]
+
+
 def create_app():
     """Build the FastAPI worker app (imported lazily so the SDK needn't depend on FastAPI)."""
     from fastapi import FastAPI, HTTPException
@@ -97,6 +149,19 @@ def create_app():
     def run(req: RunRequest) -> dict:
         try:
             return execute_published(req.slug, req.bars, req.params)
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except Exception as e:  # noqa: BLE001 — surface author errors to the caller
+            raise HTTPException(status_code=400, detail=f"execution error: {e}")
+
+    @app.get("/strategies")
+    def strategies_list() -> dict:
+        return {"strategies": list_strategies()}
+
+    @app.post("/strategy")
+    def strategy(req: StrategyRequest) -> dict:
+        try:
+            return execute_strategy(req.slug, req.bars)
         except FileNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e))
         except Exception as e:  # noqa: BLE001 — surface author errors to the caller
