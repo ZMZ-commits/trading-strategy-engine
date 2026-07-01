@@ -19,7 +19,9 @@ def _to_df(bars: Any) -> pd.DataFrame:
     df = bars.copy() if isinstance(bars, pd.DataFrame) else pd.DataFrame(list(bars))
     df.columns = [str(c).lower() for c in df.columns]
     if "timestamp" in df.columns:
-        df = df.set_index(pd.to_datetime(df["timestamp"]))
+        # utc=True so ranges that cross a DST boundary (mixed -04:00/-05:00
+        # offsets, e.g. 5Y/MAX) don't raise "Mixed timezones detected".
+        df = df.set_index(pd.to_datetime(df["timestamp"], utc=True))
     for col in _OHLCV:
         if col not in df.columns:
             df[col] = pd.NA
