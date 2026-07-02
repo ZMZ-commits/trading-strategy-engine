@@ -22,17 +22,8 @@ def _to_value(x: Any):
     return None if math.isnan(f) else round(f, 6)
 
 
-def run_indicator(compute: Callable[[Ctx], None], bars: Any, params: dict | None = None) -> dict:
-    """Run ``compute(ctx)`` over ``bars`` and return its indicator series.
-
-    Returns::
-
-        {"indicators": {name: {"kind": "overlay"|"oscillator",
-                               "time": [...], "values": [...]}}}
-    """
-    ctx = Ctx(bars, params)
-    compute(ctx)
-
+def serialize_ctx(ctx: Ctx) -> dict:
+    """Serialize an already-run Ctx's plots into the chart's series shape."""
     if isinstance(ctx.df.index, pd.DatetimeIndex):
         time = [t.isoformat() for t in ctx.df.index]
     else:
@@ -46,3 +37,16 @@ def run_indicator(compute: Callable[[Ctx], None], bars: Any, params: dict | None
             "values": [_to_value(x) for x in list(p["series"])],
         }
     return {"indicators": out}
+
+
+def run_indicator(compute: Callable[[Ctx], None], bars: Any, params: dict | None = None) -> dict:
+    """Run ``compute(ctx)`` over ``bars`` and return its indicator series.
+
+    Returns::
+
+        {"indicators": {name: {"kind": "overlay"|"oscillator",
+                               "time": [...], "values": [...]}}}
+    """
+    ctx = Ctx(bars, params)
+    compute(ctx)
+    return serialize_ctx(ctx)
