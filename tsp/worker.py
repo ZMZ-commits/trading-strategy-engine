@@ -20,7 +20,8 @@ from typing import Any, Callable
 
 from pydantic import BaseModel
 
-from .runner import run_indicator
+from .context import Ctx
+from .runner import run_indicator, serialize_ctx
 
 
 def _registry_base(registry: "Path | None" = None) -> Path:
@@ -71,26 +72,42 @@ def load_strategy_ns(slug: str, registry: "Path | None" = None) -> dict:
     return namespace
 
 
-def execute_strategy(slug: str, bars: Any, registry: "Path | None" = None) -> dict:
-    """Run a strategy's compute (for its plotted line) and signals (markers).
+def _iso(ts: Any):
+    return ts.isoformat() if hasattr(ts, "isoformat") else (None if ts is None else str(ts))
 
-    Returns run_indicator's ``{"indicators": {...}}`` plus a ``signals`` list of
-    ``{"time": iso, "type": "buy"|"sell", "price": float}``.
+
+def execute_strategy(slug: str, bars: Any, registry: "Path | None" = None) -> dict:
+    """Run a strategy's compute(ctx) and return its chart series + trades + logs.
+
+    Trades come from the ctx tracker (ctx.buy/ctx.sell); if a strategy instead
+    defines a legacy ``signals(bars)`` function, that's used as a fallback.
+
+    Returns ``{"indicators": {...}, "signals": [...], "logs": [...],
+    "pnl": float, "requires": [...], "meta": {...}}``.
     """
     ns = load_strategy_ns(slug, registry)
     compute = ns.get("compute")
     if not callable(compute):
         raise ValueError(f"strategy '{slug}' has no compute(ctx)")
-    result = run_indicator(compute, bars)
 
-    signals = []
-    sig_fn = ns.get("signals")
-    if callable(sig_fn):
-        for s in sig_fn(bars):
-            ts = s.get("ts")
-            time = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
-            signals.append({"time": time, "type": s.get("type"), "price": s.get("price")})
-    result["signals"] = signals
+    ctx = Ctx(bars)
+    compute(ctx)
+    result = serialize_ctx(ctx)
+
+    # Trades: prefer the tracker; fall back to a legacy signals(bars) function.
+    trades = list(ctx.trades)
+    if not trades and callable(ns.get("signals")):
+        for s in ns["signals"](bars):
+            trades.append({"ts": s.get("ts"), "type": s.get("type"), "price": s.get("price")})
+    result["signals"] = [
+        {"time": _iso(t.get("ts")), "type": t.get("type"), "price": t.get("price")} for t in trades
+    ]
+
+    # P&L console + realized P&L + declared indicator requirements.
+    result["logs"] = [{"time": _iso(lg.get("ts")), "msg": lg.get("msg")} for lg in ctx.logs]
+    result["pnl"] = ctx.pnl
+    req = ns.get("REQUIRES")
+    result["requires"] = [str(x) for x in req] if isinstance(req, (list, tuple)) else []
     result["meta"] = {"slug": slug, "kind": "strategy"}
     return result
 
