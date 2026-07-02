@@ -50,3 +50,12 @@ def stoch(high: pd.Series, low: pd.Series, close: pd.Series, k: int = 14, d: int
     fast_k = 100 * (close - ll) / (hh - ll).replace(0, np.nan)
     slow_k = fast_k.rolling(d).mean()
     return slow_k, slow_k.rolling(d).mean()
+
+
+def donchian(high: pd.Series, low: pd.Series, entry_n: int = 20, exit_n: int = 10):
+    """Donchian channel. Returns (upper, lower); each SHIFTED by 1 bar so a bar
+    can never break out of its own high/low (the value at bar i only reflects
+    the PRIOR entry_n/exit_n bars)."""
+    upper = high.rolling(entry_n).max().shift(1)
+    lower = low.rolling(exit_n).min().shift(1)
+    return upper, lower
