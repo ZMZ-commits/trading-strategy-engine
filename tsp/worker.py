@@ -76,11 +76,23 @@ def _iso(ts: Any):
     return ts.isoformat() if hasattr(ts, "isoformat") else (None if ts is None else str(ts))
 
 
-def execute_strategy(slug: str, bars: Any, registry: "Path | None" = None) -> dict:
-    """Run a strategy's compute(ctx) and return its chart series + trades + logs.
+def execute_strategy(slug: str, bars: Any, registry: "Path | None" = None,
+                     display_start: "str | None" = None) -> dict:
+    """Run a strategy's compute(ctx) over ``bars`` and return its chart series +
+    trades + logs.
+
+    ``bars`` may include WARMUP bars before the display window (the caller
+    fetches extra history so rolling indicators and the trade tracker's state --
+    in_position, running highs/lows -- are already primed by the time the
+    display window starts, instead of resetting to flat every time the view is
+    re-fetched). If ``display_start`` (an ISO timestamp) is given, everything
+    returned (indicator series, signals, logs, pnl) is trimmed to bars at or
+    after it; the warmup bars only fed the computation and never appear in the
+    trimmed output.
 
     Trades come from the ctx tracker (ctx.buy/ctx.sell); if a strategy instead
-    defines a legacy ``signals(bars)`` function, that's used as a fallback.
+    defines a legacy ``signals(bars)`` function, that's used as a fallback (no
+    warmup trimming applies to that path).
 
     Returns ``{"indicators": {...}, "signals": [...], "logs": [...],
     "pnl": float, "requires": [...], "meta": {...}}``.
@@ -99,13 +111,41 @@ def execute_strategy(slug: str, bars: Any, registry: "Path | None" = None) -> di
     if not trades and callable(ns.get("signals")):
         for s in ns["signals"](bars):
             trades.append({"ts": s.get("ts"), "type": s.get("type"), "price": s.get("price")})
-    result["signals"] = [
+    signals = [
         {"time": _iso(t.get("ts")), "type": t.get("type"), "price": t.get("price")} for t in trades
     ]
+    logs = [{"time": _iso(lg.get("ts")), "msg": lg.get("msg")} for lg in ctx.logs]
 
-    # P&L console + realized P&L + declared indicator requirements.
-    result["logs"] = [{"time": _iso(lg.get("ts")), "msg": lg.get("msg")} for lg in ctx.logs]
-    result["pnl"] = ctx.pnl
+    if display_start:
+        # Trim the warmup-only portion out of every emitted series/list. The
+        # state (ctx.in_position etc.) already reflects the warmup bars, so a
+        # trade that OPENED during warmup and is still open when the display
+        # window starts is correctly represented once it's later closed inside
+        # the window -- only its opening leg is invisible, same as a real chart
+        # showing an already-open position. Best-effort: never let a trim
+        # failure (e.g. non-timestamp index) break the whole response.
+        try:
+            for series in result.get("indicators", {}).values():
+                keep = [i for i, t in enumerate(series["time"]) if isinstance(t, str) and t >= display_start]
+                series["time"] = [series["time"][i] for i in keep]
+                series["values"] = [series["values"][i] for i in keep]
+            signals = [s for s in signals if s["time"] and s["time"] >= display_start]
+            logs = [lg for lg in logs if lg["time"] and lg["time"] >= display_start]
+        except Exception:
+            pass
+
+    result["signals"] = signals
+    result["logs"] = logs
+    # Realized P&L over exactly what's shown (matches the trimmed signals),
+    # not ctx.pnl (which would include warmup-only round-trips).
+    pnl, entry = 0.0, None
+    for s in signals:
+        if s["type"] == "buy":
+            entry = s["price"]
+        elif s["type"] == "sell" and entry is not None:
+            pnl += s["price"] - entry
+            entry = None
+    result["pnl"] = round(pnl, 4)
     req = ns.get("REQUIRES")
     result["requires"] = [str(x) for x in req] if isinstance(req, (list, tuple)) else []
     result["meta"] = {"slug": slug, "kind": "strategy"}
@@ -146,6 +186,7 @@ class RunRequest(BaseModel):
 class StrategyRequest(BaseModel):
     slug: str
     bars: list[dict]
+    display_start: str | None = None
 
 
 def create_app():
@@ -178,7 +219,7 @@ def create_app():
     @app.post("/strategy")
     def strategy(req: StrategyRequest) -> dict:
         try:
-            return execute_strategy(req.slug, req.bars)
+            return execute_strategy(req.slug, req.bars, display_start=req.display_start)
         except FileNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e))
         except Exception as e:  # noqa: BLE001 — surface author errors to the caller
