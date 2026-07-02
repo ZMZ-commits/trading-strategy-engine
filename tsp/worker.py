@@ -122,13 +122,17 @@ def execute_strategy(slug: str, bars: Any, registry: "Path | None" = None,
         # trade that OPENED during warmup and is still open when the display
         # window starts is correctly represented once it's later closed inside
         # the window -- only its opening leg is invisible, same as a real chart
-        # showing an already-open position.
-        for series in result.get("indicators", {}).values():
-            keep = [i for i, t in enumerate(series["time"]) if t >= display_start]
-            series["time"] = [series["time"][i] for i in keep]
-            series["values"] = [series["values"][i] for i in keep]
-        signals = [s for s in signals if s["time"] and s["time"] >= display_start]
-        logs = [lg for lg in logs if lg["time"] and lg["time"] >= display_start]
+        # showing an already-open position. Best-effort: never let a trim
+        # failure (e.g. non-timestamp index) break the whole response.
+        try:
+            for series in result.get("indicators", {}).values():
+                keep = [i for i, t in enumerate(series["time"]) if isinstance(t, str) and t >= display_start]
+                series["time"] = [series["time"][i] for i in keep]
+                series["values"] = [series["values"][i] for i in keep]
+            signals = [s for s in signals if s["time"] and s["time"] >= display_start]
+            logs = [lg for lg in logs if lg["time"] and lg["time"] >= display_start]
+        except Exception:
+            pass
 
     result["signals"] = signals
     result["logs"] = logs
