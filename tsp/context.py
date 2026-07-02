@@ -81,6 +81,8 @@ class Ctx:
         return indicators.bbands(self._s(series), n, k)
     def vwap(self): return indicators.vwap(self.high, self.low, self.close, self.volume)
     def stoch(self, k: int = 14, d: int = 3): return indicators.stoch(self.high, self.low, self.close, k, d)
+    def donchian(self, entry_n: int = 20, exit_n: int = 10):
+        return indicators.donchian(self.high, self.low, entry_n, exit_n)
 
     # ── output sink ──
     def plot(self, name: str, series: pd.Series, kind: str = "overlay") -> None:
