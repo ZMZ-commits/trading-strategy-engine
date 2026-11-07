@@ -31,8 +31,16 @@ strategy store the backend uses.
 | Staging | `staging` | No |
 | Dev | `dev` | No |
 
-CI workflows (`deploy-{dev,staging,prod}.yml`) exist but this is a package, not a
-running service. It ships by being a dependency of the backend image.
+There are no deploy workflows: this is a package, not a running service. It ships
+by being a dependency of the backend image — the backend pins it in its
+`requirements.txt` as `git+https://github.com/zmz-commits/trading-strategy-engine@main`,
+so **merging to `main` is the release**.
+
+The one workflow that publishes anything is `build-sandbox.yml`
+(`Dockerfile.sandbox` → `ghcr.io/zmz-commits/trading-strategy-sandbox:prod`),
+which the platform's compose `sandbox` service consumes. The root `Dockerfile`
+is referenced by no workflow and builds an image nothing pulls; it is useful only
+for running the engine standalone by hand.
 
 ---
 
@@ -89,6 +97,10 @@ running service. It ships by being a dependency of the backend image.
 ## 5. Latest Changes (Living)
 > Prepend newest first. Recompute: `git log origin/main --no-merges --oneline`.
 
+- **2026-11-07** (`dev`) — remove the three Hetzner `deploy-{dev,staging,prod}.yml`
+  workflows. They were added before the engine settled into a library and never
+  succeeded once (0/6 runs since June): the repo has no `SSH_HOST`/`SSH_KEY`
+  secrets, and no `engine-*` service exists in the platform's compose file.
 - **2026-06-21** (`feature/tsp-sdk` → `dev`) — add `tsp` authoring SDK (Ctx,
   indicator math, run_indicator, publish) — Phase 1b of the custom-indicator IDE.
 - **2026-06-11** (`main`) — add GHCR docker login to VM deploy step.
