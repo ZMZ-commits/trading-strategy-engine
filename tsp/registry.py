@@ -13,6 +13,7 @@ import inspect
 import json
 import os
 import re
+import textwrap
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -45,7 +46,10 @@ def publish(
 
     dest = registry_dir() / slug
     dest.mkdir(parents=True, exist_ok=True)
-    (dest / "compute.py").write_text(inspect.getsource(compute))
+    # getsource keeps the source's original indentation, so a compute defined
+    # inside a function or class would be written out still indented and fail to
+    # compile when the worker execs it. Dedent before writing.
+    (dest / "compute.py").write_text(textwrap.dedent(inspect.getsource(compute)))
     (dest / "meta.json").write_text(json.dumps({
         "name": name,
         "slug": slug,
