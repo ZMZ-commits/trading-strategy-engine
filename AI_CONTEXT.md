@@ -36,6 +36,10 @@ by being a dependency of the backend image — the backend pins it in its
 `requirements.txt` as `git+https://github.com/zmz-commits/trading-strategy-engine@main`,
 so **merging to `main` is the release**.
 
+CI is `tests.yml` (pytest on every PR into `dev`/`staging`/`main` and on pushes
+to them) — that is the gate, since there is nothing to deploy. Run it locally with
+`pytest -q`; `pytest.ini` sets `pythonpath = .`, so no install step is needed.
+
 The one workflow that publishes anything is `build-sandbox.yml`
 (`Dockerfile.sandbox` → `ghcr.io/zmz-commits/trading-strategy-sandbox:prod`),
 which the platform's compose `sandbox` service consumes. The root `Dockerfile`
@@ -97,6 +101,11 @@ for running the engine standalone by hand.
 ## 5. Latest Changes (Living)
 > Prepend newest first. Recompute: `git log origin/main --no-merges --oneline`.
 
+- **2026-11-08** (`dev`) — add `tests.yml` (pytest CI, the repo's first). Adding it
+  surfaced that `tests/test_worker.py` had **two failing tests** nobody was running:
+  `publish()` wrote `inspect.getsource(compute)` undedented, so a `compute` defined
+  inside a function produced a `compute.py` that would not compile. Fixed with
+  `textwrap.dedent`; suite is 17 passed, 64% coverage.
 - **2026-11-07** (`dev`) — remove the three Hetzner `deploy-{dev,staging,prod}.yml`
   workflows. They were added before the engine settled into a library and never
   succeeded once (0/6 runs since June): the repo has no `SSH_HOST`/`SSH_KEY`
